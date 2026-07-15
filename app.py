@@ -2,27 +2,14 @@ from flask import Flask, request, jsonify
 import psycopg2
 from datetime import datetime
 import json
-
+from python_service.state_machine import (
+    get_manual_transition,
+    get_worker_transition,
+)
 app = Flask(__name__)
 
-MANUAL_TRANSITIONS = {
-    ("CREATED", "START_VALIDATION"): "VALIDATING",
-    ("APPROVED", "START_PROCESSING"): "PROCESSING",
-
-    ("CREATED", "CANCEL"): "CANCELLED",
-    ("VALIDATING", "CANCEL"): "CANCELLED",
-    ("APPROVED", "CANCEL"): "CANCELLED",
-}
-
-WORKER_TRANSITIONS = {
-    ("VALIDATE", "SUCCESS"): ("APPROVED", "APPROVE"),
-    ("VALIDATE", "FAILED"): ("VALIDATION_FAILED", "REJECT"),
-
-    ("PROCESS", "SUCCESS"): ("COMPLETED", "COMPLETE"),
-    ("PROCESS", "FAILED"): ("PROCESSING_FAILED", "FAIL"),
-}
-
-
+from flask_cors import CORS
+CORS(app)
 
 def get_connection():
     return psycopg2.connect(
@@ -46,7 +33,21 @@ def get_connection():
 
 @app.route("/workflows", methods=["POST"])
 def create_workflow():
-    data = request.get_json()
+    print("===== REQUEST =====", flush=True)
+    print("Content-Type:", request.content_type, flush=True)
+    print("Raw:", request.get_data(as_text=True), flush=True)
+
+    data = request.get_json(silent=True)
+    print("Parsed:", data, flush=True)
+
+    if not data:
+        return jsonify({"message": "No JSON received"}), 400
+
+    if "reference" not in data:
+        return jsonify({
+            "message": "reference missing",
+            "received": data
+        }), 400
 
     reference = data["reference"]
 
@@ -57,7 +58,8 @@ def create_workflow():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    try:
+        cur.execute("""
                 INSERT INTO workflows
                     (reference, payload, state, version, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
@@ -70,12 +72,22 @@ def create_workflow():
                     created_at
                 ))
 
-    workflow_id = cur.fetchone()[0]
+        workflow_id = cur.fetchone()[0]
+        conn.commit()
 
-    conn.commit()
+    except Exception as e:
 
-    cur.close()
-    conn.close()
+        conn.rollback()
+
+        return jsonify({
+            "code": "DATABASE_ERROR",
+            "message": str(e)
+        }), 500
+
+    finally:
+
+        cur.close()
+        conn.close()
 
     return jsonify({
         "id": workflow_id,
@@ -157,120 +169,157 @@ def transition_workflow(workflow_id):
     conn = get_connection()
     cur = conn.cursor()
 
-    # Get current workflow
-    cur.execute("""
-        SELECT state, payload
-        FROM workflows
-        WHERE id = %s
-    """, (workflow_id,))
+    try:
+        # Lock workflow row
+        cur.execute("""
+            SELECT state, payload
+            FROM workflows
+            WHERE id = %s
+            FOR UPDATE
+        """, (workflow_id,))
 
-    row = cur.fetchone()
+        row = cur.fetchone()
 
-    if row is None:
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Workflow not found"}), 404
+        if row is None:
+            return jsonify({"message": "Workflow not found"}), 404
 
-    current_state = row[0]
-    payload = json.dumps(row[1]) #### Check it!!!
+        current_state = row[0]
+        payload = json.dumps(row[1])
 
-    key = (current_state, action)
+        # Validate transition
+        try:
+            new_state = get_manual_transition(
+                current_state,
+                action
+            )
 
-    if key not in MANUAL_TRANSITIONS:
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Invalid transition"}), 400
+        except Exception as e:
+            conn.rollback()
 
-    new_state = MANUAL_TRANSITIONS[key]
+            return jsonify({
+                "code": "INVALID_TRANSITION",
+                "message": str(e)
+            }), 400
 
-    now = datetime.now()
 
-    # Update workflow
-    cur.execute("""
-        UPDATE workflows
-        SET
-            state = %s,
-            version = version + 1,
-            updated_at = %s
-        WHERE id = %s
-    """, (
-        new_state,
-        now,
-        workflow_id
-    ))
+        # Check duplicate action BEFORE changing workflow
+        action_type = None
 
-    # Save history
-    cur.execute("""
-        INSERT INTO workflow_history
-        (
+        if action == "START_VALIDATION":
+            action_type = "VALIDATE"
+
+        elif action == "START_PROCESSING":
+            action_type = "PROCESS"
+
+
+        if action_type:
+
+            cur.execute("""
+                SELECT id
+                FROM actions
+                WHERE workflow_id = %s
+                AND type = %s
+                AND status = 'PENDING'
+            """, (
+                workflow_id,
+                action_type
+            ))
+
+            existing_action = cur.fetchone()
+
+            if existing_action:
+
+                conn.commit()
+
+                return jsonify({
+                    "workflowId": workflow_id,
+                    "state": current_state,
+                    "message": "Action already created",
+                    "actionId": existing_action[0]
+                }), 200
+
+
+        now = datetime.now()
+
+
+        # Update workflow
+        cur.execute("""
+            UPDATE workflows
+            SET
+                state = %s,
+                version = version + 1,
+                updated_at = %s
+            WHERE id = %s
+        """, (
+            new_state,
+            now,
+            workflow_id
+        ))
+
+
+        # Save history
+        cur.execute("""
+            INSERT INTO workflow_history
+            (
+                workflow_id,
+                from_state,
+                to_state,
+                action,
+                timestamp
+            )
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
             workflow_id,
-            from_state,
-            to_state,
+            current_state,
+            new_state,
             action,
-            timestamp
-        )
-        VALUES (%s, %s, %s, %s, %s)
-    """, (
-        workflow_id,
-        current_state,
-        new_state,
-        action,
-        now
-    ))
-
-    # Enqueue VALIDATE action
-    if action == "START_VALIDATION":
-
-        cur.execute("""
-            INSERT INTO actions
-            (
-                workflow_id,
-                type,
-                status,
-                attempt,
-                payload,
-                created_at,
-                updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            workflow_id,
-            "VALIDATE",
-            "PENDING",
-            1,
-            payload,
-            now,
             now
         ))
 
-    # Enqueue PROCESS action
-    elif action == "START_PROCESSING":
 
-        cur.execute("""
-            INSERT INTO actions
-            (
+        # Create action
+        if action_type:
+
+            cur.execute("""
+                INSERT INTO actions
+                (
+                    workflow_id,
+                    type,
+                    status,
+                    attempt,
+                    payload,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
                 workflow_id,
-                type,
-                status,
-                attempt,
+                action_type,
+                "PENDING",
+                1,
                 payload,
-                created_at,
-                updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            workflow_id,
-            "PROCESS",
-            "PENDING",
-            1,
-            payload,
-            now,
-            now
-        ))
+                now,
+                now
+            ))
 
-    conn.commit()
-    cur.close()
-    conn.close()
+
+        conn.commit()
+
+
+    except Exception:
+
+        conn.rollback()
+
+        return jsonify({
+            "code": "DATABASE_ERROR",
+            "message": "Database operation failed"
+        }), 500
+
+
+    finally:
+        cur.close()
+        conn.close()
+
 
     return jsonify({
         "workflowId": workflow_id,
@@ -332,135 +381,155 @@ def report_action_result(action_id):
     conn = get_connection()
     cur = conn.cursor()
 
-    # Get action information
-    cur.execute("""
-        SELECT workflow_id, type, status
-        FROM actions
-        WHERE id = %s
-    """, (action_id,))
-
-    action_row = cur.fetchone()
-
-    if action_row is None:
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Action not found"}), 404
-
-    workflow_id = action_row[0]
-    action_type = action_row[1]
-    action_status = action_row[2]
-
-    if action_status != "PENDING":
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Action already processed"}), 400
-
-
-    # Find the resulting workflow transition
-    key = (action_type, status)
-
-    if key not in WORKER_TRANSITIONS:
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Invalid worker transition"}), 400
-
-    new_state, history_action = WORKER_TRANSITIONS[key]
-
-
-    # Get current workflow state for history
-    cur.execute("""
-        SELECT state
-        FROM workflows
-        WHERE id = %s
-    """, (workflow_id,))
-
-    workflow_row = cur.fetchone()
-
-    if workflow_row is None:
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Workflow not found"}), 404
-
-    current_state = workflow_row[0]
-
-    now = datetime.now()
-
-
-    # Update action result
-    if status == "SUCCESS":
-
-        result = json.dumps(data.get("result", {}))
-
+    try:
+        # Get action information
         cur.execute("""
-            UPDATE actions
-            SET
-                status = %s,
-                result = %s,
-                updated_at = %s
+            SELECT workflow_id, type, status
+            FROM actions
             WHERE id = %s
-        """, (
-            "SUCCESS",
-            result,
-            now,
-            action_id
-        ))
+            FOR UPDATE
+        """, (action_id,))
 
-    else:
+        action_row = cur.fetchone()
 
-        error = data.get("error", "Unknown error")
+        if action_row is None:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Action not found"}), 404
 
-        cur.execute("""
-            UPDATE actions
-            SET
-                status = %s,
-                error = %s,
-                updated_at = %s
-            WHERE id = %s
-        """, (
-            "FAILED",
-            error,
-            now,
-            action_id
-        ))
+        workflow_id = action_row[0]
+        action_type = action_row[1]
+        action_status = action_row[2]
+
+        if action_status != "PENDING":
+            cur.close()
+            conn.close()
+            return jsonify({
+                "message": "Action already processed",
+                "actionId": action_id,
+                "status": action_status
+            }), 200
 
 
-    # Update workflow state
-    cur.execute("""
-        UPDATE workflows
-        SET
-            state = %s,
-            version = version + 1,
-            updated_at = %s
-        WHERE id = %s
-    """, (
-        new_state,
-        now,
-        workflow_id
-    ))
-
-
-    # Add workflow history
-    cur.execute("""
-        INSERT INTO workflow_history
-        (
-            workflow_id,
-            from_state,
-            to_state,
-            action,
-            timestamp
+        new_state, history_action = get_worker_transition(
+            action_type,
+            status
         )
-        VALUES (%s, %s, %s, %s, %s)
-    """, (
-        workflow_id,
-        current_state,
-        new_state,
-        history_action,
-        now
-    ))
 
-    conn.commit()
-    cur.close()
-    conn.close()
+    except Exception as e:
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "code": "INVALID_WORKER_TRANSITION",
+            "message": str(e)
+        }), 400
+
+
+    try:
+        cur.execute("""
+            SELECT state
+            FROM workflows
+            WHERE id = %s
+            FOR UPDATE
+        """, (workflow_id,))
+
+        workflow_row = cur.fetchone()
+
+        if workflow_row is None:
+            cur.close()
+            conn.close()
+            return jsonify({"message": "Workflow not found"}), 404
+
+        current_state = workflow_row[0]
+
+        now = datetime.now()
+
+
+        # Update action result
+        if status == "SUCCESS":
+
+            result = json.dumps(data.get("result", {}))
+
+            cur.execute("""
+                UPDATE actions
+                SET
+                    status = %s,
+                    result = %s,
+                    updated_at = %s
+                WHERE id = %s
+            """, (
+                "SUCCESS",
+                result,
+                now,
+                action_id
+            ))
+
+        else:
+
+            error = data.get("error", "Unknown error")
+
+            cur.execute("""
+                UPDATE actions
+                SET
+                    status = %s,
+                    error = %s,
+                    updated_at = %s
+                WHERE id = %s
+            """, (
+                "FAILED",
+                error,
+                now,
+                action_id
+            ))
+
+
+        # Update workflow state
+        cur.execute("""
+            UPDATE workflows
+            SET
+                state = %s,
+                version = version + 1,
+                updated_at = %s
+            WHERE id = %s
+        """, (
+            new_state,
+            now,
+            workflow_id
+        ))
+
+        # Add workflow history
+        cur.execute("""
+            INSERT INTO workflow_history
+            (
+                workflow_id,
+                from_state,
+                to_state,
+                action,
+                timestamp
+            )
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            workflow_id,
+            current_state,
+            new_state,
+            history_action,
+            now
+        ))
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+
+        return jsonify({
+            "code": "DATABASE_ERROR",
+            "message": "Database operation failed"
+        }), 500
+
+    finally:
+        cur.close()
+        conn.close()
 
     return jsonify({
         "workflowId": workflow_id,

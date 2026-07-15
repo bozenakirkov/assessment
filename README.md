@@ -61,3 +61,42 @@ expected:
 
 # process-succes
 curl.exe -X POST http://localhost:5000/actions/2/result -H "Content-Type: application/json" -d "@process_success.json"
+
+#####
+PS C:\Users\Bozena\PycharmProjects\PythonProject\SoftwareOne> curl.exe -X POST http://localhost:5000/workflows -H "Content-Type: application/json" -d "@workflow.json"
+{
+  "createdAt": "Wed, 15 Jul 2026 10:50:03 GMT",
+  "id": 1,
+  "reference": "order-123",
+  "state": "CREATED",
+  "version": 1
+}
+PS C:\Users\Bozena\PycharmProjects\PythonProject\SoftwareOne> curl.exe -X POST http://localhost:5000/workflows/1/transitions -H "Content-Type: application/json" -d "@transition.json"
+{
+  "message": "Transition completed successfully",
+  "state": "VALIDATING",
+  "workflowId": 1
+}
+PS C:\Users\Bozena\PycharmProjects\PythonProject\SoftwareOne> curl.exe -X POST http://localhost:5000/actions/1/result -H "Content-Type: application/json" -d "@validation_success.json"
+{
+  "message": "Action result processed successfully",
+  "state": "APPROVED",
+  "workflowId": 1
+}
+PS C:\Users\Bozena\PycharmProjects\PythonProject\SoftwareOne> curl.exe -X POST http://localhost:5000/workflows/1/transitions -H "Content-Type: application/json" -d "@processing_transition.json"
+{
+  "message": "Transition completed successfully",
+  "state": "PROCESSING",
+  "workflowId": 1
+}
+PS C:\Users\Bozena\PycharmProjects\PythonProject\SoftwareOne> curl.exe -X POST http://localhost:5000/actions/2/result -H "Content-Type: application/json" -d "@process_success.json"
+{
+  "message": "Action result processed successfully",
+  "state": "COMPLETED",
+  "workflowId": 1
+}
+
+
+
+# #########################################
+install node.js
