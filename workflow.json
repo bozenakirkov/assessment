@@ -1,0 +1,7 @@
+{
+  "reference": "order-123",
+  "payload": {
+    "customerId": "customer-1",
+    "amount": 120.50
+  }
+}
