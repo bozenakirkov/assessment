@@ -122,8 +122,8 @@ async function loadWorkflows() {
 
 
                 <button 
-                    onclick="showHistory(${workflow.id})">
-                    HISTORY
+                    onclick="showDetails(${workflow.id})">
+                    DETAILS
                 </button>
 
 
@@ -228,41 +228,93 @@ async function sendTransition(id, action) {
 }
 
 
-
-
 // Show workflow history
-async function showHistory(id) {
+async function showDetails(id) {
 
-    try {
+    const workflowResponse =
+        await fetch(`${API_URL}/workflows/${id}`);
 
-        const response = await fetch(
-            `${API_URL}/workflows/${id}/history`
-        );
+    const historyResponse =
+        await fetch(`${API_URL}/workflows/${id}/history`);
 
-
-        const history = await response.json();
-
-
-        console.log(history);
+    const actionsResponse =
+        await fetch(`${API_URL}/workflows/${id}/actions`);
 
 
-        alert(
-            JSON.stringify(
-                history,
-                null,
-                2
-            )
-        );
+    const workflow = await workflowResponse.json();
+    const history = await historyResponse.json();
+    const actions = await actionsResponse.json();
 
 
-    } catch(error) {
+    document.getElementById("details").innerHTML = `
+        <h3>Payload</h3>
 
-        alert(error.message);
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+            
+                <tbody>
+                    ${Object.entries(workflow.payload).map(([key, value]) => `
+                        <tr>
+                            <td>${key}</td>
+                            <td>${value}</td>
+                        </tr>
+                    `).join("")}
+                </tbody>
+            </table>
 
-    }
+        <h3>Actions</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Action</th>
+                        <th>Status</th>
+                        <th>Attempt</th>
+                        <th>Created</th>
+                        <th>Updated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${actions.map(a => `
+                        <tr>
+                            <td>${a.type}</td>
+                            <td>${a.status}</td>
+                            <td>${a.attempt}</td>
+                            <td>${a.createdAt}</td>
+                            <td>${a.updatedAt}</td>
+                        </tr>
+                    `).join("")}
+                </tbody>
+            </table>
 
+        <h3>History</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>From</th>
+                        <th>Action</th>
+                        <th>To</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+            
+                <tbody>
+                    ${history.map(h => `
+                        <tr>
+                            <td>${h.fromState}</td>
+                            <td>${h.action}</td>
+                            <td>${h.toState}</td>
+                            <td>${h.timestamp}</td>
+                        </tr>
+                    `).join("")}
+                </tbody>
+            </table>
+            `;
 }
-
 
 
 
@@ -298,6 +350,7 @@ async function createWorkflow() {
                     reference: reference,
 
                     payload:{
+                        customerId: "customer-1",
                         amount: Number(amount)
                     }
 

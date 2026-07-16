@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY python_service ./python_service
-COPY worker ./worker
+COPY node_worker ./node_worker
 COPY tests ./tests
 
 EXPOSE 5000

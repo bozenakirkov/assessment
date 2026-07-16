@@ -28,17 +28,6 @@ def get_connection():
     )
 
 
-"""
-{
-    "reference": "order-123",
-    "payload": {
-        "customerId": "customer-1",
-        "amount": 120.50
-    }
-}
-"""
-
-
 @app.route("/workflows", methods=["POST"])
 def create_workflow():
 
@@ -108,7 +97,7 @@ def get_workflow(workflow_id):
     cur = conn.cursor()
 
     cur.execute("""
-                SELECT id, reference, state, version, created_at
+                SELECT id, reference, state, version, created_at, payload
                 FROM workflows
                 WHERE id = %s
                 """, (workflow_id,))
@@ -126,7 +115,8 @@ def get_workflow(workflow_id):
         "reference": row[1],
         "state": row[2],
         "version": row[3],
-        "createdAt": row[4]
+        "createdAt": row[4],
+        "payload": row[5]
     })
 
 
@@ -567,7 +557,7 @@ def report_action_result(action_id):
     except Exception as e:
         conn.rollback()
 
-        print("Database ERROR:", str(s))
+        print("Database ERROR:", str(e))
 
         return jsonify({
             "code": "DATABASE_ERROR",
@@ -583,6 +573,64 @@ def report_action_result(action_id):
         "state": new_state,
         "message": "Action result processed successfully"
     }), 200
+
+
+@app.route("/workflows/<int:workflow_id>/actions", methods=["GET"])
+def get_workflow_actions(workflow_id):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # Check workflow exists
+    cur.execute("""
+        SELECT id
+        FROM workflows
+        WHERE id = %s
+    """, (workflow_id,))
+
+    workflow = cur.fetchone()
+
+    if workflow is None:
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "message": "Workflow not found"
+        }), 404
+
+
+    # Get all actions for this workflow
+    cur.execute("""
+        SELECT
+            type,
+            status,
+            attempt,
+            created_at,
+            updated_at
+        FROM actions
+        WHERE workflow_id = %s
+        ORDER BY id
+    """, (workflow_id,))
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+
+    actions = []
+
+    for row in rows:
+        actions.append({
+            "type": row[0],
+            "status": row[1],
+            "attempt": row[2],
+            "createdAt": row[3],
+            "updatedAt": row[4]
+        })
+
+
+    return jsonify(actions)
 
 
 @app.route("/workflows/<int:workflow_id>/history", methods=["GET"])
@@ -635,6 +683,7 @@ def get_workflow_history(workflow_id):
         })
 
     return jsonify(history)
+
 
 
 if __name__ == "__main__":
