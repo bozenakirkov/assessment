@@ -30,7 +30,6 @@ def create_test_workflow(client):
             }
         }
     )
-    print("====>", response.get_json())
     assert response.status_code == 200
 
     return response.get_json()["id"]
@@ -136,8 +135,6 @@ def test_duplicate_worker_result_is_idempotent(client):
         "/actions/pending"
     ).get_json()
 
-    ##########
-    print("PENDING ACTIONS:", actions)
     action = next(
         a for a in actions
         if a["workflowId"] == workflow_id

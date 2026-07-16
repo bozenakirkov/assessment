@@ -1,7 +1,7 @@
 .idea
 .pytest_cache
 .venv
-node_worker/node_modules/
+node-worker/node_modules/
 __pycache__
 processing_transition.json
 process_success.json
