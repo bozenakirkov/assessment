@@ -2,7 +2,7 @@ import pytest
 import threading
 import uuid
 
-from app import app, get_connection
+from app import app
 
 
 @pytest.fixture

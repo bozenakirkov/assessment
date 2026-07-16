@@ -11,7 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./python_service/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d workflow_db"]
       interval: 5s
@@ -29,7 +29,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres_test_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./python_service/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d workflow_test_db"]
       interval: 5s
@@ -37,7 +37,9 @@ services:
       retries: 5
 
   app:
-    build: .
+    build:
+      context: ./python_service
+      dockerfile: Dockerfile
     container_name: workflow_api
     depends_on:
       db:
@@ -52,7 +54,8 @@ services:
 
   tests:
     build:
-      context: .
+      context: ./python_service
+      dockerfile: Dockerfile
     depends_on:
       db_test:
         condition: service_healthy
@@ -71,7 +74,6 @@ services:
       - app
     environment:
       API_URL: http://app:5000
-
 
 volumes:
   postgres_data:

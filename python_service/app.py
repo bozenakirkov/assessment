@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify
 import psycopg2
-from python_service.state_machine import (
+from state_machine import (
     get_manual_transition,
     get_worker_transition,
 )
