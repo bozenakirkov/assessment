@@ -18,6 +18,23 @@ services:
       timeout: 5s
       retries: 5
 
+  db_test:
+    image: postgres:16
+    container_name: workflow_postgres_test
+    environment:
+      POSTGRES_DB: workflow_test_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d workflow_test_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   app:
     build: .
@@ -27,14 +44,35 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
+    environment:
+      DB_HOST: db
+      DB_NAME: workflow_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres123
 
+  tests:
+    build:
+      context: .
+    depends_on:
+      db_test:
+        condition: service_healthy
+    environment:
+      DB_HOST: db_test
+      DB_NAME: workflow_test_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres123
+      PYTHONPATH: /app
+    command: pytest -v
 
   worker:
     build:
       context: ./worker
     depends_on:
       - app
+    environment:
+      API_URL: http://app:5000
 
 
 volumes:
   postgres_data:
+  postgres_test_data:

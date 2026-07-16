@@ -1,7 +1,9 @@
+import os
+import json
+from datetime import datetime
+
 from flask import Flask, request, jsonify
 import psycopg2
-from datetime import datetime
-import json
 from python_service.state_machine import (
     get_manual_transition,
     get_worker_transition,
@@ -11,12 +13,18 @@ app = Flask(__name__)
 from flask_cors import CORS
 CORS(app)
 
+DB_HOST = os.getenv("DB_HOST", "db")
+DB_NAME = os.getenv("DB_NAME", "workflow_db")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres123")
+
+
 def get_connection():
     return psycopg2.connect(
-        host="db",
-        database="workflow_db",
-        user="postgres",
-        password="postgres123"
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
     )
 
 
@@ -33,12 +41,8 @@ def get_connection():
 
 @app.route("/workflows", methods=["POST"])
 def create_workflow():
-    print("===== REQUEST =====", flush=True)
-    print("Content-Type:", request.content_type, flush=True)
-    print("Raw:", request.get_data(as_text=True), flush=True)
 
     data = request.get_json(silent=True)
-    print("Parsed:", data, flush=True)
 
     if not data:
         return jsonify({"message": "No JSON received"}), 400
@@ -172,7 +176,7 @@ def transition_workflow(workflow_id):
     try:
         # Lock workflow row
         cur.execute("""
-            SELECT state, payload
+            SELECT state, payload, version
             FROM workflows
             WHERE id = %s
             FOR UPDATE
@@ -180,17 +184,32 @@ def transition_workflow(workflow_id):
 
         row = cur.fetchone()
 
+        print(
+            "LOCK ACQUIRED:",
+            workflow_id,
+            row
+        )
+
         if row is None:
             return jsonify({"message": "Workflow not found"}), 404
 
         current_state = row[0]
         payload = json.dumps(row[1])
+        current_version = row[2]
 
         # Validate transition
         try:
             new_state = get_manual_transition(
                 current_state,
                 action
+            )
+            print(
+                "TRANSITION:",
+                workflow_id,
+                current_state,
+                action,
+                "->",
+                new_state
             )
 
         except Exception as e:
@@ -250,11 +269,21 @@ def transition_workflow(workflow_id):
                 version = version + 1,
                 updated_at = %s
             WHERE id = %s
+            AND version = %s
         """, (
             new_state,
             now,
-            workflow_id
+            workflow_id,
+            current_version
         ))
+
+        if cur.rowcount != 1:
+            conn.rollback()
+
+            return jsonify({
+                "code": "STALE_WORKFLOW",
+                "message": "Workflow was modified by another request"
+            }), 409
 
 
         # Save history
@@ -410,6 +439,12 @@ def report_action_result(action_id):
                 "status": action_status
             }), 200
 
+        print("=============================")
+        print("ACTION TYPE:", action_type)
+        print("STATUS:", status)
+        print("ACTION WORKFLOW:", workflow_id)
+        print("ACTION ID:", action_id)
+
 
         new_state, history_action = get_worker_transition(
             action_type,
@@ -498,6 +533,15 @@ def report_action_result(action_id):
             workflow_id
         ))
 
+        print("workflow update rows:", cur.rowcount)
+
+        #######3
+        print("INSERT HISTORY:")
+        print("workflow_id:", workflow_id)
+        print("from:", current_state)
+        print("to:", new_state)
+        print("action:", history_action)
+
         # Add workflow history
         cur.execute("""
             INSERT INTO workflow_history
@@ -516,11 +560,14 @@ def report_action_result(action_id):
             history_action,
             now
         ))
+        print("history insert rows:", cur.rowcount)
 
         conn.commit()
 
-    except Exception:
+    except Exception as e:
         conn.rollback()
+
+        print("Database ERROR:", str(s))
 
         return jsonify({
             "code": "DATABASE_ERROR",
@@ -571,6 +618,8 @@ def get_workflow_history(workflow_id):
     """, (workflow_id,))
 
     rows = cur.fetchall()
+    print("FETCHING HISTORY FOR:", workflow_id)
+    print("ROWS:", rows)
 
     cur.close()
     conn.close()

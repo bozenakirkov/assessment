@@ -47,3 +47,107 @@ body {
 .cancelled {
     background: black;
 }
+
+body {
+    font-family: Arial, sans-serif;
+    background: #f5f7fb;
+    margin: 30px;
+    color: #333;
+}
+
+
+h1 {
+    color: #222;
+}
+
+
+/* Workflow card */
+.workflow {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 15px;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+}
+
+
+/* Inputs */
+input {
+    padding: 8px;
+    margin: 5px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+
+/* Buttons */
+button {
+    padding: 8px 14px;
+    margin: 5px;
+    border: none;
+    border-radius: 5px;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+}
+
+
+button:hover:not(:disabled) {
+    background: #1d4ed8;
+}
+
+
+button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+
+/* State badge */
+.state-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 15px;
+    color: white;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+
+/* State colors */
+.created {
+    background: gray;
+}
+
+.validating {
+    background: dodgerblue;
+}
+
+.approved {
+    background: green;
+}
+
+.processing {
+    background: orange;
+}
+
+.completed {
+    background: darkgreen;
+}
+
+.validation-failed,
+.processing-failed {
+    background: crimson;
+}
+
+.cancelled {
+    background: black;
+}
+
+
+hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin-top: 20px;
+}

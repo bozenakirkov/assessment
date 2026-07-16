@@ -1,6 +1,57 @@
 const API_URL = "http://localhost:5000";
 
 
+function getAvailableActions(state) {
+
+    return {
+        canStartValidation: state === "CREATED",
+
+        canStartProcessing: state === "APPROVED",
+
+        canCancel: [
+            "CREATED",
+            "VALIDATING",
+            "APPROVED"
+        ].includes(state)
+    };
+
+}
+
+function getStateClass(state) {
+
+    switch (state) {
+
+        case "CREATED":
+            return "created";
+
+        case "VALIDATING":
+            return "validating";
+
+        case "APPROVED":
+            return "approved";
+
+        case "PROCESSING":
+            return "processing";
+
+        case "COMPLETED":
+            return "completed";
+
+        case "VALIDATION_FAILED":
+            return "validation-failed";
+
+        case "PROCESSING_FAILED":
+            return "processing-failed";
+
+        case "CANCELLED":
+            return "cancelled";
+
+        default:
+            return "";
+    }
+
+}
+
+
 // Load workflows from Flask API
 async function loadWorkflows() {
 
@@ -21,6 +72,11 @@ async function loadWorkflows() {
         workflows.forEach(workflow => {
 
             const div = document.createElement("div");
+            div.className = "workflow";
+
+            const actions = getAvailableActions(workflow.state);
+
+            const stateClass = getStateClass(workflow.state);
 
             div.innerHTML = `
                 <h3>
@@ -28,8 +84,9 @@ async function loadWorkflows() {
                 </h3>
 
                 <p>
-                    State:
-                    <strong>${workflow.state}</strong>
+                    <span class="state-badge ${stateClass}">
+                        ${workflow.state}
+                    </span>
                 </p>
 
                 <p>
@@ -43,20 +100,23 @@ async function loadWorkflows() {
                 </p>
 
 
-                <button 
-                    onclick="startValidation(${workflow.id})">
+                <button
+                    onclick="startValidation(${workflow.id})"
+                    ${actions.canStartValidation ? "" : "disabled"}>
                     START_VALIDATION
                 </button>
 
 
-                <button 
-                    onclick="startProcessing(${workflow.id})">
+                <button
+                    onclick="startProcessing(${workflow.id})"
+                    ${actions.canStartProcessing ? "" : "disabled"}>
                     START_PROCESSING
                 </button>
 
 
-                <button 
-                    onclick="cancelWorkflow(${workflow.id})">
+                <button
+                    onclick="cancelWorkflow(${workflow.id})"
+                    ${actions.canCancel ? "" : "disabled"}>
                     CANCEL
                 </button>
 

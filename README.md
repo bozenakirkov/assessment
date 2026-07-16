@@ -1,8 +1,14 @@
 # assessment
 
+1. run Docker Desktop
+
 docker compose down -v
 
-docker compose up --build
+2. docker compose up --build
+
+3. open frontend/index.html
+
+
 
 docker exec -it workflow_postgres \
 psql -U postgres -d workflow_db \
