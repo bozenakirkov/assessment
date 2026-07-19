@@ -247,6 +247,8 @@ async function showDetails(id) {
 
 
     document.getElementById("details").innerHTML = `
+        <h3>Reference: ${workflow.reference}</h3>
+        
         <h3>Payload</h3>
 
             <table class="data-table">
