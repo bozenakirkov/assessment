@@ -4,10 +4,13 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify
 import psycopg2
+
 from state_machine import (
     get_manual_transition,
     get_worker_transition,
 )
+from errors import error_response
+
 app = Flask(__name__)
 
 from flask_cors import CORS
@@ -34,13 +37,16 @@ def create_workflow():
     data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({"message": "No JSON received"}), 400
+        return error_response("INVALID_REQUEST", "No JSON received")
 
     if "reference" not in data:
-        return jsonify({
-            "message": "reference missing",
-            "received": data
-        }), 400
+        return error_response("INVALID_REQUEST", "Reference missing")
+
+    print("===========")
+    print("data", data)
+
+    if "payload" not in data:
+        return error_response("INVALID_REQUEST", "Payload missing")
 
     reference = data["reference"]
 
@@ -72,10 +78,7 @@ def create_workflow():
 
         conn.rollback()
 
-        return jsonify({
-            "code": "DATABASE_ERROR",
-            "message": str(e)
-        }), 500
+        return error_response("DATABASE_ERROR")
 
     finally:
 
@@ -108,7 +111,7 @@ def get_workflow(workflow_id):
     conn.close()
 
     if row is None:
-        return jsonify({"message": "Workflow not found"}), 404
+        return error_response("WORKFLOW_NOT_FOUND")
 
     return jsonify({
         "id": row[0],
@@ -156,7 +159,7 @@ def transition_workflow(workflow_id):
     data = request.get_json()
 
     if not data or "action" not in data:
-        return jsonify({"message": "Action is required"}), 400
+        return error_response("INVALID_REQUEST", "Action is required")
 
     action = data["action"]
 
@@ -175,7 +178,7 @@ def transition_workflow(workflow_id):
         row = cur.fetchone()
 
         if row is None:
-            return jsonify({"message": "Workflow not found"}), 404
+            return error_response("WORKFLOW_NOT_FOUND")
 
         current_state = row[0]
         payload = json.dumps(row[1])
@@ -191,10 +194,7 @@ def transition_workflow(workflow_id):
         except Exception as e:
             conn.rollback()
 
-            return jsonify({
-                "code": "INVALID_TRANSITION",
-                "message": str(e)
-            }), 400
+            return error_response("INVALID_TRANSITION", str(e))
 
 
         # Check duplicate action BEFORE changing workflow
@@ -231,7 +231,7 @@ def transition_workflow(workflow_id):
                     "state": current_state,
                     "message": "Action already created",
                     "actionId": existing_action[0]
-                }), 200
+                })
 
 
         now = datetime.now()
@@ -256,10 +256,7 @@ def transition_workflow(workflow_id):
         if cur.rowcount != 1:
             conn.rollback()
 
-            return jsonify({
-                "code": "STALE_WORKFLOW",
-                "message": "Workflow was modified by another request"
-            }), 409
+            return error_response("STALE_WORKFLOW")
 
 
         # Save history
@@ -315,22 +312,17 @@ def transition_workflow(workflow_id):
 
         conn.rollback()
 
-        return jsonify({
-            "code": "DATABASE_ERROR",
-            "message": "Database operation failed"
-        }), 500
-
+        return error_response("DATABASE_ERROR")
 
     finally:
         cur.close()
         conn.close()
 
-
     return jsonify({
         "workflowId": workflow_id,
         "state": new_state,
         "message": "Transition completed successfully"
-    }), 200
+    })
 
 @app.route("/actions/pending", methods=["GET"])
 def pending_actions():
@@ -376,12 +368,12 @@ def report_action_result(action_id):
     data = request.get_json()
 
     if not data or "status" not in data:
-        return jsonify({"message": "Status is required"}), 400
+        return error_response("INVALID_REQUEST", "Status is required")
 
     status = data["status"]
 
     if status not in ["SUCCESS", "FAILED"]:
-        return jsonify({"message": "Invalid status"}), 400
+        return error_response("INVALID_REQUEST", "Invalid status")
 
     conn = get_connection()
     cur = conn.cursor()
@@ -400,7 +392,7 @@ def report_action_result(action_id):
         if action_row is None:
             cur.close()
             conn.close()
-            return jsonify({"message": "Action not found"}), 404
+            return error_response("ACTION_NOT_FOUND")
 
         workflow_id = action_row[0]
         action_type = action_row[1]
@@ -413,7 +405,7 @@ def report_action_result(action_id):
                 "message": "Action already processed",
                 "actionId": action_id,
                 "status": action_status
-            }), 200
+            })
 
         new_state, history_action = get_worker_transition(
             action_type,
@@ -424,11 +416,7 @@ def report_action_result(action_id):
         cur.close()
         conn.close()
 
-        return jsonify({
-            "code": "INVALID_WORKER_TRANSITION",
-            "message": str(e)
-        }), 400
-
+        return error_response("INVALID_WORKER_TRANSITION", str(e))
 
     try:
         cur.execute("""
@@ -443,7 +431,7 @@ def report_action_result(action_id):
         if workflow_row is None:
             cur.close()
             conn.close()
-            return jsonify({"message": "Workflow not found"}), 404
+            return error_response("WORKFLOW_NOT_FOUND")
 
         current_state = workflow_row[0]
 
@@ -526,11 +514,7 @@ def report_action_result(action_id):
     except Exception as e:
         conn.rollback()
 
-
-        return jsonify({
-            "code": "DATABASE_ERROR",
-            "message": "Database operation failed"
-        }), 500
+        return error_response("DATABASE_ERROR")
 
     finally:
         cur.close()
@@ -540,7 +524,7 @@ def report_action_result(action_id):
         "workflowId": workflow_id,
         "state": new_state,
         "message": "Action result processed successfully"
-    }), 200
+    })
 
 
 @app.route("/workflows/<int:workflow_id>/actions", methods=["GET"])
@@ -562,9 +546,7 @@ def get_workflow_actions(workflow_id):
         cur.close()
         conn.close()
 
-        return jsonify({
-            "message": "Workflow not found"
-        }), 404
+        return error_response("WORKFLOW_NOT_FOUND")
 
 
     # Get all actions for this workflow
@@ -619,7 +601,7 @@ def get_workflow_history(workflow_id):
     if workflow is None:
         cur.close()
         conn.close()
-        return jsonify({"message": "Workflow not found"}), 404
+        return error_response("WORKFLOW_NOT_FOUND")
 
     # Get history
     cur.execute("""

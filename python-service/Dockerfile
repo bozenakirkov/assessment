@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY state_machine.py .
+COPY errors.py .
 COPY init.sql .
 COPY tests ./tests
 
