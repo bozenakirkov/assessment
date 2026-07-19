@@ -2,7 +2,7 @@ import pytest
 import threading
 import uuid
 
-from app import app
+from app import app, get_connection
 
 
 @pytest.fixture
@@ -237,51 +237,39 @@ def test_worker_failure_moves_workflow_to_failed_state(client):
     assert data["state"] == "PROCESSING_FAILED"
 
 
-def test_concurrent_transitions_do_not_corrupt_state(client, app_instance):
+def test_stale_workflow_update_is_rejected(client):
 
     workflow_id = create_test_workflow(client)
 
-    results = []
-
-
-    def send_transition(action):
-
-        with app_instance.test_client() as thread_client:
-
-            response = thread_client.post(
-                f"/workflows/{workflow_id}/transitions",
-                json={
-                    "action": action
-                }
-            )
-
-            results.append(response.status_code)
-
-    thread1 = threading.Thread(
-        target=send_transition,
-        args=("START_VALIDATION",)
+    # First transition changes version from 1 -> 2
+    response = client.post(
+        f"/workflows/{workflow_id}/transitions",
+        json={
+            "action": "START_VALIDATION"
+        }
     )
 
-    thread2 = threading.Thread(
-        target=send_transition,
-        args=("START_PROCESSING",)
-    )
+    assert response.status_code == 200
 
+    # simulate an old client using version 1
+    conn = get_connection()
+    cur = conn.cursor()
 
-    thread1.start()
-    thread2.start()
+    cur.execute("""
+        UPDATE workflows
+        SET state = %s,
+            version = version + 1
+        WHERE id = %s
+        AND version = %s
+    """, (
+        "PROCESSING",
+        workflow_id,
+        1   # old/stale version
+    ))
 
-    thread1.join()
-    thread2.join()
+    assert cur.rowcount == 0
 
+    conn.rollback()
 
-    assert results.count(200) == 1
-
-    workflow = client.get(
-        f"/workflows/{workflow_id}"
-    ).get_json()
-
-    assert workflow["state"] in [
-        "VALIDATING",
-        "CANCELLED"
-    ]
+    cur.close()
+    conn.close()

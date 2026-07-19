@@ -1,9 +1,11 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, request, jsonify
 import psycopg2
+from flasgger import Swagger
+from flask_cors import CORS
 
 from state_machine import (
     get_manual_transition,
@@ -12,8 +14,7 @@ from state_machine import (
 from errors import error_response
 
 app = Flask(__name__)
-
-from flask_cors import CORS
+swagger = Swagger(app)
 CORS(app)
 
 DB_HOST = os.getenv("DB_HOST", "db")
@@ -33,6 +34,24 @@ def get_connection():
 
 @app.route("/workflows", methods=["POST"])
 def create_workflow():
+    """
+    Create a new workflow.
+    ---
+    tags:
+      - Workflows
+    parameters:
+      - name: workflow
+        in: body
+        required: true
+        description: Workflow reference and payload.
+    responses:
+      200:
+        description: Workflow created successfully.
+      400:
+        description: Invalid request.
+      500:
+        description: Database error.
+    """
 
     data = request.get_json(silent=True)
 
@@ -49,7 +68,7 @@ def create_workflow():
 
     payload = json.dumps(data["payload"])
 
-    created_at = datetime.now()
+    created_at = datetime.now(timezone.utc)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -64,8 +83,8 @@ def create_workflow():
                     payload,
                     "CREATED",
                     1,
-                    created_at,
-                    created_at
+                    created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
                 ))
 
         workflow_id = cur.fetchone()[0]
@@ -93,6 +112,22 @@ def create_workflow():
 
 @app.route("/workflows/<int:workflow_id>", methods=["GET"])
 def get_workflow(workflow_id):
+    """
+    Get workflow details by ID.
+    ---
+    tags:
+      - Workflows
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Workflow identifier.
+    responses:
+      200:
+        description: Workflow details returned.
+      404:
+        description: Workflow not found.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -122,6 +157,15 @@ def get_workflow(workflow_id):
 
 @app.route("/workflows", methods=["GET"])
 def list_workflows():
+    """
+    Get all workflows.
+    ---
+    tags:
+      - Workflows
+    responses:
+      200:
+        description: List of workflows.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -144,7 +188,7 @@ def list_workflows():
             "reference": row[1],
             "state": row[2],
             "version": row[3],
-            "updatedAt": row[4]
+            "updatedAt": row[4].strftime("%Y-%m-%dT%H:%M:%SZ")
         })
 
     return jsonify(workflows)
@@ -152,7 +196,32 @@ def list_workflows():
 
 @app.route("/workflows/<int:workflow_id>/transitions", methods=["POST"])
 def transition_workflow(workflow_id):
-
+    """
+    Apply a manual workflow transition.
+    ---
+    tags:
+      - Workflows
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Workflow identifier.
+      - name: action
+        in: body
+        required: true
+        description: Transition action to execute.
+    responses:
+      200:
+        description: Transition completed successfully.
+      400:
+        description: Invalid transition or request.
+      404:
+        description: Workflow not found.
+      409:
+        description: Stale workflow update.
+      500:
+        description: Database error.
+    """
     data = request.get_json()
 
     if not data or "action" not in data:
@@ -231,7 +300,7 @@ def transition_workflow(workflow_id):
                 })
 
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
 
         # Update workflow
@@ -323,7 +392,15 @@ def transition_workflow(workflow_id):
 
 @app.route("/actions/pending", methods=["GET"])
 def pending_actions():
-
+    """
+    Get pending worker actions.
+    ---
+    tags:
+      - Actions
+    responses:
+      200:
+        description: Pending actions returned.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -361,7 +438,30 @@ def pending_actions():
 
 @app.route("/actions/<int:action_id>/result", methods=["POST"])
 def report_action_result(action_id):
-
+    """
+    Report result of a worker action.
+    ---
+    tags:
+      - Actions
+    parameters:
+      - name: action_id
+        in: path
+        required: true
+        description: Action identifier.
+      - name: status
+        in: body
+        required: true
+        description: SUCCESS or FAILED result.
+    responses:
+      200:
+        description: Action result processed.
+      400:
+        description: Invalid worker result.
+      404:
+        description: Action or workflow not found.
+      500:
+        description: Database error.
+    """
     data = request.get_json()
 
     if not data or "status" not in data:
@@ -432,7 +532,7 @@ def report_action_result(action_id):
 
         current_state = workflow_row[0]
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
 
         # Update action result
@@ -526,7 +626,22 @@ def report_action_result(action_id):
 
 @app.route("/workflows/<int:workflow_id>/actions", methods=["GET"])
 def get_workflow_actions(workflow_id):
-
+    """
+    Get actions belonging to a workflow.
+    ---
+    tags:
+      - Workflows
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Workflow identifier.
+    responses:
+      200:
+        description: Workflow actions returned.
+      404:
+        description: Workflow not found.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -572,8 +687,8 @@ def get_workflow_actions(workflow_id):
             "type": row[0],
             "status": row[1],
             "attempt": row[2],
-            "createdAt": row[3],
-            "updatedAt": row[4]
+            "createdAt": row[3].strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updatedAt": row[4].strftime("%Y-%m-%dT%H:%M:%SZ")
         })
 
 
@@ -582,7 +697,22 @@ def get_workflow_actions(workflow_id):
 
 @app.route("/workflows/<int:workflow_id>/history", methods=["GET"])
 def get_workflow_history(workflow_id):
-
+    """
+    Get workflow transition history.
+    ---
+    tags:
+      - History
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Workflow identifier.
+    responses:
+      200:
+        description: Workflow history returned.
+      404:
+        description: Workflow not found.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -624,7 +754,7 @@ def get_workflow_history(workflow_id):
             "fromState": row[0],
             "toState": row[1],
             "action": row[2],
-            "timestamp": row[3]
+            "timestamp": row[3].strftime("%Y-%m-%dT%H:%M:%SZ")
         })
 
     return jsonify(history)
