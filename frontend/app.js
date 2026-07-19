@@ -335,6 +335,10 @@ async function createWorkflow() {
         return;
     }
 
+    if (!amount) {
+        alert("Amount is required");
+        return;
+    }
 
     try {
 

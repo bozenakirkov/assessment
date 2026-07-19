@@ -1,0 +1,22 @@
+import logging
+import os
+import sys
+
+
+def configure_logging():
+
+    level = os.getenv(
+        "LOG_LEVEL",
+        "INFO"
+    )
+
+    logging.basicConfig(
+        level=level,
+        format=(
+            "%(asctime)s "
+            "%(levelname)s "
+            "%(name)s "
+            "%(message)s"
+        ),
+        stream=sys.stdout
+    )

@@ -11,6 +11,7 @@ COPY state_machine.py .
 COPY errors.py .
 COPY init.sql .
 COPY tests ./tests
+COPY logging_config.py .
 
 EXPOSE 5000
 

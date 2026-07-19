@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime, timezone
+import logging
 
 from flask import Flask, request, jsonify
 import psycopg2
@@ -12,6 +13,12 @@ from state_machine import (
     get_worker_transition,
 )
 from errors import error_response
+from logging_config import configure_logging
+
+
+configure_logging()
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 swagger = Swagger(app)
@@ -66,7 +73,17 @@ def create_workflow():
 
     reference = data["reference"]
 
-    payload = json.dumps(data["payload"])
+    payload_data = data["payload"]
+
+    amount = payload_data.get("amount")
+
+    payload = json.dumps(payload_data)
+
+    logger.debug(
+        "workflow_creation_requested reference=%s amount=%s",
+        reference,
+        amount
+    )
 
     created_at = datetime.now(timezone.utc)
 
@@ -89,6 +106,12 @@ def create_workflow():
 
         workflow_id = cur.fetchone()[0]
         conn.commit()
+        logger.info(
+            "workflow_created workflow_id=%s reference=%s amount=%s",
+            workflow_id,
+            reference,
+            amount
+        )
 
     except Exception as e:
 
@@ -128,6 +151,10 @@ def get_workflow(workflow_id):
       404:
         description: Workflow not found.
     """
+    logger.debug(
+        "workflow_retrieval_requested workflow_id=%s",
+        workflow_id
+    )
     conn = get_connection()
     cur = conn.cursor()
 
@@ -143,7 +170,18 @@ def get_workflow(workflow_id):
     conn.close()
 
     if row is None:
+        logger.warning(
+            "workflow_not_found workflow_id=%s",
+            workflow_id
+        )
         return error_response("WORKFLOW_NOT_FOUND")
+
+    logger.debug(
+        "workflow_retrieved workflow_id=%s reference=%s state=%s",
+        row[0],
+        row[1],
+        row[2]
+    )
 
     return jsonify({
         "id": row[0],
@@ -166,6 +204,8 @@ def list_workflows():
       200:
         description: List of workflows.
     """
+    logger.debug("workflow_list_requested")
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -190,6 +230,11 @@ def list_workflows():
             "version": row[3],
             "updatedAt": row[4].strftime("%Y-%m-%dT%H:%M:%SZ")
         })
+
+    logger.debug(
+        "workflow_list_returned count=%s",
+        len(workflows)
+    )
 
     return jsonify(workflows)
 
@@ -225,6 +270,10 @@ def transition_workflow(workflow_id):
     data = request.get_json()
 
     if not data or "action" not in data:
+        logger.warning(
+            "workflow_transition_invalid_request workflow_id=%s",
+            workflow_id
+        )
         return error_response("INVALID_REQUEST", "Action is required")
 
     action = data["action"]
@@ -244,6 +293,11 @@ def transition_workflow(workflow_id):
         row = cur.fetchone()
 
         if row is None:
+            logger.warning(
+                "workflow_not_found_for_transition workflow_id=%s action=%s",
+                workflow_id,
+                action
+            )
             return error_response("WORKFLOW_NOT_FOUND")
 
         current_state = row[0]
@@ -259,6 +313,13 @@ def transition_workflow(workflow_id):
 
         except Exception as e:
             conn.rollback()
+            logger.warning(
+                "workflow_transition_rejected workflow_id=%s state=%s action=%s reason=%s",
+                workflow_id,
+                current_state,
+                action,
+                str(e)
+            )
 
             return error_response("INVALID_TRANSITION", str(e))
 
@@ -289,6 +350,12 @@ def transition_workflow(workflow_id):
             existing_action = cur.fetchone()
 
             if existing_action:
+                logger.info(
+                    "workflow_action_already_exists workflow_id=%s action_type=%s action_id=%s",
+                    workflow_id,
+                    action_type,
+                    existing_action[0]
+                )
 
                 conn.commit()
 
@@ -321,6 +388,11 @@ def transition_workflow(workflow_id):
 
         if cur.rowcount != 1:
             conn.rollback()
+            logger.warning(
+                "workflow_transition_stale_update workflow_id=%s expected_version=%s",
+                workflow_id,
+                current_version
+            )
 
             return error_response("STALE_WORKFLOW")
 
@@ -372,11 +444,22 @@ def transition_workflow(workflow_id):
 
 
         conn.commit()
+        logger.info(
+            "workflow_transition_completed workflow_id=%s %s - %s - %s",
+            workflow_id,
+            current_state,
+            new_state,
+            action
+        )
 
 
     except Exception:
-
         conn.rollback()
+        logger.exception(
+            "workflow_transition_failed workflow_id=%s action=%s",
+            workflow_id,
+            action
+        )
 
         return error_response("DATABASE_ERROR")
 
@@ -389,6 +472,7 @@ def transition_workflow(workflow_id):
         "state": new_state,
         "message": "Transition completed successfully"
     })
+
 
 @app.route("/actions/pending", methods=["GET"])
 def pending_actions():
@@ -433,6 +517,11 @@ def pending_actions():
             "payload": row[4]
         })
 
+    logger.debug(
+        "pending_actions_returned count=%s",
+        len(actions)
+    )
+
     return jsonify(actions)
 
 
@@ -465,11 +554,20 @@ def report_action_result(action_id):
     data = request.get_json()
 
     if not data or "status" not in data:
+        logger.warning(
+            "worker_result_invalid_request action_id=%s",
+            action_id
+        )
         return error_response("INVALID_REQUEST", "Status is required")
 
     status = data["status"]
 
     if status not in ["SUCCESS", "FAILED"]:
+        logger.warning(
+            "worker_result_invalid_status action_id=%s status=%s",
+            action_id,
+            status
+        )
         return error_response("INVALID_REQUEST", "Invalid status")
 
     conn = get_connection()
@@ -487,6 +585,10 @@ def report_action_result(action_id):
         action_row = cur.fetchone()
 
         if action_row is None:
+            logger.warning(
+                "action_not_found action_id=%s",
+                action_id
+            )
             cur.close()
             conn.close()
             return error_response("ACTION_NOT_FOUND")
@@ -496,6 +598,11 @@ def report_action_result(action_id):
         action_status = action_row[2]
 
         if action_status != "PENDING":
+            logger.info(
+                "worker_result_already_processed action_id=%s current_status=%s",
+                action_id,
+                action_status
+            )
             cur.close()
             conn.close()
             return jsonify({
@@ -512,6 +619,11 @@ def report_action_result(action_id):
     except Exception as e:
         cur.close()
         conn.close()
+        logger.warning(
+            "invalid_worker_transition action_id=%s error=%s",
+            action_id,
+            str(e)
+        )
 
         return error_response("INVALID_WORKER_TRANSITION", str(e))
 
@@ -528,6 +640,11 @@ def report_action_result(action_id):
         if workflow_row is None:
             cur.close()
             conn.close()
+            logger.warning(
+                "workflow_not_found_for_action action_id=%s workflow_id=%s",
+                action_id,
+                workflow_id
+            )
             return error_response("WORKFLOW_NOT_FOUND")
 
         current_state = workflow_row[0]
@@ -607,9 +724,21 @@ def report_action_result(action_id):
         ))
 
         conn.commit()
+        logger.info(
+            "action_processed action_id=%s workflow_id=%s %s - %s - %s",
+            action_id,
+            workflow_id,
+            action_type,
+            status,
+            new_state
+        )
 
     except Exception as e:
         conn.rollback()
+        logger.exception(
+            "worker_result_processing_failed action_id=%s",
+            action_id
+        )
 
         return error_response("DATABASE_ERROR")
 
@@ -642,6 +771,10 @@ def get_workflow_actions(workflow_id):
       404:
         description: Workflow not found.
     """
+    logger.debug(
+        "workflow_actions_requested workflow_id=%s",
+        workflow_id
+    )
     conn = get_connection()
     cur = conn.cursor()
 
@@ -655,6 +788,10 @@ def get_workflow_actions(workflow_id):
     workflow = cur.fetchone()
 
     if workflow is None:
+        logger.warning(
+            "workflow_not_found_for_actions workflow_id=%s",
+            workflow_id
+        )
         cur.close()
         conn.close()
 
@@ -691,6 +828,11 @@ def get_workflow_actions(workflow_id):
             "updatedAt": row[4].strftime("%Y-%m-%dT%H:%M:%SZ")
         })
 
+    logger.debug(
+        "workflow_actions_returned workflow_id=%s count=%s",
+        workflow_id,
+        len(actions)
+    )
 
     return jsonify(actions)
 
@@ -713,6 +855,10 @@ def get_workflow_history(workflow_id):
       404:
         description: Workflow not found.
     """
+    logger.debug(
+        "workflow_history_requested workflow_id=%s",
+        workflow_id
+    )
     conn = get_connection()
     cur = conn.cursor()
 
@@ -726,6 +872,10 @@ def get_workflow_history(workflow_id):
     workflow = cur.fetchone()
 
     if workflow is None:
+        logger.warning(
+            "workflow_not_found_for_history workflow_id=%s",
+            workflow_id
+        )
         cur.close()
         conn.close()
         return error_response("WORKFLOW_NOT_FOUND")
@@ -756,6 +906,12 @@ def get_workflow_history(workflow_id):
             "action": row[2],
             "timestamp": row[3].strftime("%Y-%m-%dT%H:%M:%SZ")
         })
+
+    logger.debug(
+        "workflow_history_returned workflow_id=%s count=%s",
+        workflow_id,
+        len(history)
+    )
 
     return jsonify(history)
 

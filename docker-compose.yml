@@ -51,6 +51,7 @@ services:
       DB_NAME: workflow_db
       DB_USER: postgres
       DB_PASSWORD: postgres123
+      LOG_LEVEL: INFO
 
   tests:
     build:

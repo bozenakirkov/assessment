@@ -215,6 +215,17 @@ When a transition is performed:
 - stale updates are rejected.
 
 
+# Logging
+
+The application uses Python logging with the following levels:
+
+- `INFO` for important workflow events (creation, transitions, worker results);
+- `WARNING` for invalid requests, rejected transitions, and errors;
+- `DEBUG` for read-only operations and detailed inspection logs.
+
+Flask request logs are reduced to `WARNING` level to avoid excessive noise.
+
+
 # API Examples
 
 ## Create workflow
