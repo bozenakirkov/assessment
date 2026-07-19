@@ -22,7 +22,7 @@ CANCELLED
 
 # Architecture
 
-The application is divided into three components.
+The application is divided into four components.
 
 ## Python API
 
