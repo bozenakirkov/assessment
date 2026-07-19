@@ -42,9 +42,6 @@ def create_workflow():
     if "reference" not in data:
         return error_response("INVALID_REQUEST", "Reference missing")
 
-    print("===========")
-    print("data", data)
-
     if "payload" not in data:
         return error_response("INVALID_REQUEST", "Payload missing")
 
