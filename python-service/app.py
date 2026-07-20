@@ -100,8 +100,8 @@ def create_workflow():
                     payload,
                     "CREATED",
                     1,
-                    created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    created_at,
+                    created_at
                 ))
 
         workflow_id = cur.fetchone()[0]
@@ -129,7 +129,7 @@ def create_workflow():
         "reference": reference,
         "state": "CREATED",
         "version": 1,
-        "createdAt": created_at
+        "createdAt": created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     })
 
 
@@ -188,7 +188,7 @@ def get_workflow(workflow_id):
         "reference": row[1],
         "state": row[2],
         "version": row[3],
-        "createdAt": row[4],
+        "createdAt": row[4].strftime("%Y-%m-%dT%H:%M:%SZ"),
         "payload": row[5]
     })
 
@@ -589,8 +589,6 @@ def report_action_result(action_id):
                 "action_not_found action_id=%s",
                 action_id
             )
-            cur.close()
-            conn.close()
             return error_response("ACTION_NOT_FOUND")
 
         workflow_id = action_row[0]
@@ -603,8 +601,6 @@ def report_action_result(action_id):
                 action_id,
                 action_status
             )
-            cur.close()
-            conn.close()
             return jsonify({
                 "message": "Action already processed",
                 "actionId": action_id,
@@ -617,8 +613,7 @@ def report_action_result(action_id):
         )
 
     except Exception as e:
-        cur.close()
-        conn.close()
+        conn.rollback()
         logger.warning(
             "invalid_worker_transition action_id=%s error=%s",
             action_id,
@@ -638,8 +633,6 @@ def report_action_result(action_id):
         workflow_row = cur.fetchone()
 
         if workflow_row is None:
-            cur.close()
-            conn.close()
             logger.warning(
                 "workflow_not_found_for_action action_id=%s workflow_id=%s",
                 action_id,

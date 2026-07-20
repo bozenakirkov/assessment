@@ -182,6 +182,8 @@ Keeping these rules outside the API layer prevents invalid state changes and kee
 
 ## Automated transitions
 
+Worker results are translated internally into APPROVE/REJECT/COMPLETE/FAIL history actions.
+
 The transitions `COMPLETE` and `FAIL` are not available through the public API.
 
 They are triggered only after the worker reports the result of a background action.
