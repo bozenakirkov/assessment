@@ -223,7 +223,8 @@ The application uses Python logging with the following levels:
 
 - `INFO` for important workflow events (creation, transitions, worker results);
 - `WARNING` for invalid requests, rejected transitions, and errors;
-- `DEBUG` for read-only operations and detailed inspection logs.
+- `DEBUG` for read-only operations and detailed inspection logs;
+- `ERROR` (using `logger.exception` to include stack traces) for unexpected failures.
 
 Flask request logs are reduced to `WARNING` level to avoid excessive noise.
 
