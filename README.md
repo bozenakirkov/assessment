@@ -334,27 +334,29 @@ The current implementation intentionally focuses on the core workflow functional
 
 Known limitations:
 
-- no authentication or authorization;
-- worker uses polling instead of a message broker;
 - no retry mechanism for failed actions;
 - no action leasing for multiple workers;
 - no production monitoring or metrics;
-- frontend is a simple static application.
+- database connection management is implemented directly in the API layer 
+  and could be improved with a dedicated database module and context-managed connections;
+- exception handling could be improved with more specific application exceptions;
 
 
 # Possible Improvements
 
 With more time, I would add:
 
-- retry support with maximum attempts;
-- worker action leasing;
-- dead-letter handling for permanently failed actions;
-- structured logging with correlation IDs;
-- API request validation schemas;
-- more integration tests;
-- WebSocket or Server-Sent Events instead of polling;
-- improved frontend state management.
-
+- improve exception handling with more specific application exceptions;
+- add database connection timeout;
+- extract database connection management into a dedicated database module;
+- use database context managers for consistent PostgreSQL connection and cursor cleanup;
+- add retry support with configurable maximum attempts for failed actions;
+- add dead-letter handling for permanently failed actions;
+- add correlation IDs across API, worker, and frontend requests;
+- add more integration tests (complete workflow lifecycle scenario, cancellation flow, 
+  invalid workflow creation requests such as missing reference or invalid amount);
+- improve frontend layout by making workflow details easier to access when viewing large workflow lists 
+  (for example, using a side panel or a dedicated details section);
 
 # AI Usage
 
