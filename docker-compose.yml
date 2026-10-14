@@ -52,6 +52,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: postgres123
       LOG_LEVEL: INFO
+      CONDUCTOR_API_URL: http://host.docker.internal:8127/api
 
   tests:
     build:
@@ -75,6 +76,18 @@ services:
       - app
     environment:
       API_URL: http://app:5000
+  
+  conductor-worker:
+    build:
+      context: ./node-worker
+    command: node conductor-worker.js
+    environment:
+      CONDUCTOR_API_URL: http://host.docker.internal:8127/api
+      WORKER_ID: validate-payload-worker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - app
 
 volumes:
   postgres_data:

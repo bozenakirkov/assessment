@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "worker": "node worker.js"
+    "worker": "node conductor-worker.js"
   },
   "keywords": [],
   "author": "",

@@ -2,6 +2,8 @@ import os
 import json
 from datetime import datetime, timezone
 import logging
+import requests
+from uuid import UUID
 
 from flask import Flask, request, jsonify
 import psycopg2
@@ -28,6 +30,8 @@ DB_HOST = os.getenv("DB_HOST", "db")
 DB_NAME = os.getenv("DB_NAME", "workflow_db")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres123")
+CONDUCTOR_API_URL = os.getenv("CONDUCTOR_API_URL", 
+                              "http://host.docker.internal:8000/api")
 
 
 def get_connection():
@@ -909,6 +913,128 @@ def get_workflow_history(workflow_id):
     return jsonify(history)
 
 
+@app.route("/conductor/workflows", methods=["POST"])
+def create_conductor_workflow():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    reference = data.get("reference")
+    payload = data.get("payload")
+
+    if not isinstance(reference, str) or not reference.strip():
+        return jsonify({"message": "Reference is required"}), 400
+
+    if not isinstance(payload, dict):
+        return jsonify({"message": "Payload must be an object"}), 400
+
+    api_url = CONDUCTOR_API_URL
+
+    if not api_url:
+        return jsonify({
+            "message": "CONDUCTOR_API_URL is not configured"
+        }), 500
+
+    start_request = {
+        "name": "first_sample_workflow",
+        "version": 1,
+        "correlationId": reference,
+        "input": {
+            "reference": reference,
+            "payload": payload
+        }
+    }
+
+    try:
+        response = requests.post(
+            f"{api_url.rstrip('/')}/workflow",
+            json=start_request,
+            timeout=(5, 20)
+        )
+        response.raise_for_status()
+
+    except requests.Timeout:
+        # The workflow might have started before the response timed out.
+        # Do not automatically retry this request.
+        return jsonify({
+            "message": (
+                "Conductor request timed out. Check Conductor "
+                "before trying again; the workflow may have started."
+            )
+        }), 504
+
+    except requests.RequestException:
+        logger.exception("conductor_workflow_start_failed")
+        return jsonify({
+            "message": (
+                "Could not start the Conductor workflow. "
+                "Check the Python service logs."
+            )
+        }), 502
+
+    # Conductor normally returns the execution ID as plain text.
+    # Also accept a JSON-encoded string.
+    workflow_id = response.text.strip().strip('"')
+
+    try:
+        UUID(workflow_id)
+    except ValueError:
+        logger.error("conductor_returned_invalid_workflow_id")
+        return jsonify({
+            "message": (
+                "Conductor did not return a workflow ID. "
+                "Check CONDUCTOR_API_URL."
+            )
+        }), 502
+
+    return jsonify({
+        "workflowId": workflow_id,
+        "reference": reference
+    }), 201
+
+
+@app.route("/conductor/workflows/<workflow_id>", methods=["GET"])
+def get_conductor_workflow(workflow_id):
+    try:
+        UUID(workflow_id)
+    except ValueError:
+        return jsonify({
+            "message": "Invalid workflow execution ID"
+        }), 400
+
+    try:
+        response = requests.get(
+            f"{CONDUCTOR_API_URL.rstrip('/')}/workflow/{workflow_id}",
+            params={"includeTasks": "true"},
+            timeout=(5, 20)
+        )
+
+        if response.status_code == 404:
+            return jsonify({
+                "message": "Conductor workflow not found"
+            }), 404
+
+        response.raise_for_status()
+        workflow = response.json()
+
+    except requests.Timeout:
+        return jsonify({
+            "message": "Timed out while reading the Conductor workflow"
+        }), 504
+
+    except requests.RequestException:
+        logger.exception("conductor_workflow_read_failed")
+        return jsonify({
+            "message": "Could not read the Conductor workflow"
+        }), 502
+
+    except ValueError:
+        return jsonify({
+            "message": "Conductor returned an invalid JSON response"
+        }), 502
+
+    return jsonify(workflow), 200
 
 if __name__ == "__main__":
     app.run(
