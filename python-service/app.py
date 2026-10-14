@@ -915,6 +915,37 @@ def get_workflow_history(workflow_id):
 
 @app.route("/conductor/workflows", methods=["POST"])
 def create_conductor_workflow():
+    """
+    Start a Conductor workflow.
+    ---
+    tags:
+      - Conductor
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: workflow
+        required: true
+        schema:
+          type: object
+          required:
+            - reference
+            - payload
+          properties:
+            reference:
+              type: string
+            payload:
+              type: object
+    responses:
+      201:
+        description: Workflow started successfully.
+      400:
+        description: Invalid request.
+      502:
+        description: Conductor error.
+      504:
+        description: Conductor timeout.
+    """
     data = request.get_json(silent=True)
 
     if not isinstance(data, dict):
@@ -996,6 +1027,28 @@ def create_conductor_workflow():
 
 @app.route("/conductor/workflows/<workflow_id>", methods=["GET"])
 def get_conductor_workflow(workflow_id):
+    """
+    Get a Conductor workflow by ID.
+    ---
+    tags:
+      - Conductor
+    parameters:
+      - in: path
+        name: workflow_id
+        required: true
+        type: string
+    responses:
+      200:
+        description: Workflow returned successfully.
+      400:
+        description: Invalid workflow ID.
+      404:
+        description: Workflow not found.
+      502:
+        description: Conductor error.
+      504:
+        description: Conductor timeout.
+    """
     try:
         UUID(workflow_id)
     except ValueError:
