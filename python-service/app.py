@@ -937,7 +937,7 @@ def create_conductor_workflow():
         }), 500
 
     start_request = {
-        "name": "first_sample_workflow",
+        "name": "validation_workflow",
         "version": 1,
         "correlationId": reference,
         "input": {
