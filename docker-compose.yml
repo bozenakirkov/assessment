@@ -52,9 +52,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: postgres123
       LOG_LEVEL: INFO
-      CONDUCTOR_API_URL: http://host.docker.internal:8127/api
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      CONDUCTOR_API_URL: http://conductor:8080/api
 
   tests:
     build:
@@ -71,18 +69,27 @@ services:
       PYTHONPATH: /app
     command: pytest -v
 
+  conductor:
+    image: conductoross/conductor:latest
+    container_name: workflow_conductor
+    ports:
+      - "8080:8080"   # Conductor API
+      - "8127:5000"   # Conductor UI
+
   conductor-init:
     image: curlimages/curl:8.10.1
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      - conductor
+    environment:
+      CONDUCTOR_API_URL: http://conductor:8080/api
     volumes:
       - ./conductor:/conductor:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
-        URL=http://host.docker.internal:8127/api
-        until curl -sf $$URL/metadata/taskdefs > /dev/null; do echo "waiting for conductor"; sleep 2; done
+        URL=$$CONDUCTOR_API_URL
+        until curl -sf $$URL/metadata/taskdefs > /dev/null; do echo "waiting for conductor"; sleep 3; done
         curl -sS --fail-with-body -X POST $$URL/metadata/taskdefs -H "Content-Type: application/json" \
           -d "[$$(cat /conductor/tasks/validate_payload.json), $$(cat /conductor/tasks/process_payload.json)]"
         curl -sS --fail-with-body -X PUT $$URL/metadata/workflow -H "Content-Type: application/json" \
@@ -93,13 +100,10 @@ services:
   conductor-worker:
     build:
       context: ./node-worker
-    command: node conductor-worker.js
     environment:
-      CONDUCTOR_API_URL: http://host.docker.internal:8127/api
+      CONDUCTOR_API_URL: http://conductor:8080/api
       API_URL: http://app:5000
       WORKER_ID: payload-worker
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       app:
         condition: service_started

@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 const CONDUCTOR_API_URL = (
-  process.env.CONDUCTOR_API_URL || "http://host.docker.internal:8127/api"
+  process.env.CONDUCTOR_API_URL || "http://conductor:8080/api"
 ).replace(/\/+$/, "");
 
 const TASK_NAMES = ["validate_payload", "process_payload"];
