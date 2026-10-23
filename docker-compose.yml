@@ -83,9 +83,9 @@ services:
         set -e
         URL=http://host.docker.internal:8127/api
         until curl -sf $$URL/metadata/taskdefs > /dev/null; do echo "waiting for conductor"; sleep 2; done
-        curl -sf -X PUT $$URL/metadata/taskdefs -H "Content-Type: application/json" \
+        curl -sf -X POST $$URL/metadata/taskdefs -H "Content-Type: application/json" \
           -d "[$$(cat /conductor/tasks/validate_payload.json), $$(cat /conductor/tasks/process_payload.json)]"
-        curl -sf -X PUT $$URL/metadata/workflow -H "Content-Type: application/json" \
+        curl -sf -X POST $$URL/metadata/workflow -H "Content-Type: application/json" \
           -d "[$$(cat /conductor/workflows/validation_workflow.json), $$(cat /conductor/workflows/processing_workflow.json)]"
         echo "conductor definitions registered"
     restart: "no"
@@ -101,7 +101,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - app
+      app:
+        condition: service_started
+      conductor-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:
