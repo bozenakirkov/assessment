@@ -71,6 +71,25 @@ services:
       PYTHONPATH: /app
     command: pytest -v
 
+  conductor-init:
+    image: curlimages/curl:8.10.1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./conductor:/conductor:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        URL=http://host.docker.internal:8127/api
+        until curl -sf $$URL/metadata/taskdefs > /dev/null; do echo "waiting for conductor"; sleep 2; done
+        curl -sf -X PUT $$URL/metadata/taskdefs -H "Content-Type: application/json" \
+          -d "[$$(cat /conductor/tasks/validate_payload.json), $$(cat /conductor/tasks/process_payload.json)]"
+        curl -sf -X PUT $$URL/metadata/workflow -H "Content-Type: application/json" \
+          -d "[$$(cat /conductor/workflows/validation_workflow.json), $$(cat /conductor/workflows/processing_workflow.json)]"
+        echo "conductor definitions registered"
+    restart: "no"
+    
   conductor-worker:
     build:
       context: ./node-worker
