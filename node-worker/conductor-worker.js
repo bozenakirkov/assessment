@@ -22,6 +22,18 @@ async function reportToApp(task, result) {
   await axios.post(`${APP_API_URL}/actions/${actionId}/result`, body, { timeout: REQUEST_TIMEOUT_MS });
 }
 
+async function reportToAppWithRetry(task, result, attempts = 3) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await reportToApp(task, result);
+    } catch (error) {
+      // Missing actionId will never succeed, don't retry
+      if (i === attempts || !task.inputData?.actionId) throw error;
+      await sleep(2000 * i);
+    }
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -116,7 +128,7 @@ async function handleTask(task, taskName) {
 
   // Report to the app (updates the workflow state in the database)
   try {
-    await reportToApp(task, result);
+    await reportToAppWithRetry(task, result);
     console.log("app_result_reported", { ...context, status: result.status });
   } catch (error) {
     console.error("app_result_report_failed", {

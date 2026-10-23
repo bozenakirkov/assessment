@@ -97,7 +97,9 @@ def test_worker_success_result_moves_workflow_to_approved(client):
 
     assert len(actions) > 0
 
-    action_id = actions[0]["id"]
+    action_id = next(
+        a["id"] for a in actions if a["workflowId"] == workflow_id
+        )
 
     result = client.post(
         f"/actions/{action_id}/result",
