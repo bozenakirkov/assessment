@@ -1,0 +1,19 @@
+{
+  "name": "process_payload",
+  "description": "Process payload after validation succeeds",
+  "retryCount": 3,
+  "retryLogic": "FIXED",
+  "retryDelaySeconds": 60,
+  "timeoutSeconds": 0,
+  "timeoutPolicy": "TIME_OUT_WF",
+  "responseTimeoutSeconds": 3600,
+  "rateLimitPerFrequency": 0,
+  "rateLimitFrequencyInSeconds": 1,
+  "ownerEmail": "example@email.com",
+  "backoffScaleFactor": 1,
+  "backoffJitterMs": 0,
+  "taskStatusListenerEnabled": true,
+  "enforceSchema": false,
+  "inputKeys": [],
+  "outputKeys": []
+}

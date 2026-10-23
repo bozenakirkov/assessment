@@ -30,8 +30,19 @@ DB_HOST = os.getenv("DB_HOST", "db")
 DB_NAME = os.getenv("DB_NAME", "workflow_db")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres123")
-CONDUCTOR_API_URL = os.getenv("CONDUCTOR_API_URL", 
-                              "http://host.docker.internal:8000/api")
+CONDUCTOR_API_URL = os.getenv(
+    "CONDUCTOR_API_URL",
+    "http://host.docker.internal:8127/api"
+)
+
+CONDUCTOR_VALIDATION_WORKFLOW_NAME = os.getenv(
+    "CONDUCTOR_VALIDATION_WORKFLOW_NAME",
+    "validation_workflow"
+)
+CONDUCTOR_PROCESSING_WORKFLOW_NAME = os.getenv(
+    "CONDUCTOR_PROCESSING_WORKFLOW_NAME",
+    "processing_workflow"
+)
 
 
 def get_connection():
@@ -41,6 +52,34 @@ def get_connection():
         user=DB_USER,
         password=DB_PASSWORD
     )
+
+
+def start_conductor_workflow(workflow_name, reference, payload):
+    api_url = CONDUCTOR_API_URL
+
+    if not api_url:
+        raise RuntimeError("CONDUCTOR_API_URL is not configured")
+
+    start_request = {
+        "name": workflow_name,
+        "version": 1,
+        "correlationId": reference,
+        "input": {
+            "reference": reference,
+            "payload": payload
+        }
+    }
+
+    response = requests.post(
+        f"{api_url.rstrip('/')}/workflow",
+        json=start_request,
+        timeout=(5, 20)
+    )
+    response.raise_for_status()
+
+    workflow_id = response.text.strip().strip('"')
+    UUID(workflow_id)  # raises ValueError if invalid
+    return workflow_id
 
 
 @app.route("/workflows", methods=["POST"])
@@ -117,14 +156,11 @@ def create_workflow():
             amount
         )
 
-    except Exception as e:
-
+    except Exception:
         conn.rollback()
-
         return error_response("DATABASE_ERROR")
 
     finally:
-
         cur.close()
         conn.close()
 
@@ -288,7 +324,7 @@ def transition_workflow(workflow_id):
     try:
         # Lock workflow row
         cur.execute("""
-            SELECT state, payload, version
+            SELECT reference, state, payload, version
             FROM workflows
             WHERE id = %s
             FOR UPDATE
@@ -304,9 +340,11 @@ def transition_workflow(workflow_id):
             )
             return error_response("WORKFLOW_NOT_FOUND")
 
-        current_state = row[0]
-        payload = json.dumps(row[1])
-        current_version = row[2]
+        reference = row[0]
+        current_state = row[1]
+        payload_raw = row[2]
+        payload = json.dumps(payload_raw)
+        current_version = row[3]
 
         # Validate transition
         try:
@@ -327,7 +365,6 @@ def transition_workflow(workflow_id):
 
             return error_response("INVALID_TRANSITION", str(e))
 
-
         # Check duplicate action BEFORE changing workflow
         action_type = None
 
@@ -337,9 +374,7 @@ def transition_workflow(workflow_id):
         elif action == "START_PROCESSING":
             action_type = "PROCESS"
 
-
         if action_type:
-
             cur.execute("""
                 SELECT id
                 FROM actions
@@ -370,9 +405,7 @@ def transition_workflow(workflow_id):
                     "actionId": existing_action[0]
                 })
 
-
         now = datetime.now(timezone.utc)
-
 
         # Update workflow
         cur.execute("""
@@ -400,7 +433,6 @@ def transition_workflow(workflow_id):
 
             return error_response("STALE_WORKFLOW")
 
-
         # Save history
         cur.execute("""
             INSERT INTO workflow_history
@@ -420,10 +452,8 @@ def transition_workflow(workflow_id):
             now
         ))
 
-
-        # Create action
+        # Create legacy action row (kept for compatibility)
         if action_type:
-
             cur.execute("""
                 INSERT INTO actions
                 (
@@ -446,6 +476,61 @@ def transition_workflow(workflow_id):
                 now
             ))
 
+        conductor_execution_id = None
+        workflow_name = None
+
+        if action == "START_VALIDATION":
+            workflow_name = CONDUCTOR_VALIDATION_WORKFLOW_NAME
+        elif action == "START_PROCESSING":
+            workflow_name = CONDUCTOR_PROCESSING_WORKFLOW_NAME
+
+        if workflow_name:
+            try:
+                payload_object = (
+                    payload_raw
+                    if isinstance(payload_raw, dict)
+                    else json.loads(payload_raw)
+                )
+
+                conductor_execution_id = start_conductor_workflow(
+                    workflow_name=workflow_name,
+                    reference=reference,
+                    payload=payload_object
+                )
+            except requests.Timeout:
+                conn.rollback()
+                return jsonify({
+                    "message": (
+                        "Conductor request timed out. Check Conductor "
+                        "before trying again; the workflow may have started."
+                    )
+                }), 504
+            except ValueError:
+                conn.rollback()
+                logger.exception(
+                    "conductor_returned_invalid_workflow_id workflow_id=%s action=%s",
+                    workflow_id,
+                    action
+                )
+                return jsonify({
+                    "message": (
+                        "Conductor did not return a workflow ID. "
+                        "Check CONDUCTOR_API_URL."
+                    )
+                }), 502
+            except requests.RequestException:
+                conn.rollback()
+                logger.exception(
+                    "conductor_workflow_start_failed workflow_id=%s action=%s",
+                    workflow_id,
+                    action
+                )
+                return jsonify({
+                    "message": (
+                        "Could not start the Conductor workflow. "
+                        "Check the Python service logs."
+                    )
+                }), 502
 
         conn.commit()
         logger.info(
@@ -455,7 +540,6 @@ def transition_workflow(workflow_id):
             new_state,
             action
         )
-
 
     except Exception:
         conn.rollback()
@@ -471,11 +555,16 @@ def transition_workflow(workflow_id):
         cur.close()
         conn.close()
 
-    return jsonify({
+    response_body = {
         "workflowId": workflow_id,
         "state": new_state,
         "message": "Transition completed successfully"
-    })
+    }
+
+    if conductor_execution_id:
+        response_body["conductorExecutionId"] = conductor_execution_id
+
+    return jsonify(response_body)
 
 
 @app.route("/actions/pending", methods=["GET"])
@@ -512,7 +601,6 @@ def pending_actions():
     actions = []
 
     for row in rows:
-
         actions.append({
             "id": row[0],
             "workflowId": row[1],
@@ -648,10 +736,8 @@ def report_action_result(action_id):
 
         now = datetime.now(timezone.utc)
 
-
         # Update action result
         if status == "SUCCESS":
-
             result = json.dumps(data.get("result", {}))
 
             cur.execute("""
@@ -669,7 +755,6 @@ def report_action_result(action_id):
             ))
 
         else:
-
             error = data.get("error", "Unknown error")
 
             cur.execute("""
@@ -685,7 +770,6 @@ def report_action_result(action_id):
                 now,
                 action_id
             ))
-
 
         # Update workflow state
         cur.execute("""
@@ -730,7 +814,7 @@ def report_action_result(action_id):
             new_state
         )
 
-    except Exception as e:
+    except Exception:
         conn.rollback()
         logger.exception(
             "worker_result_processing_failed action_id=%s",
@@ -794,7 +878,6 @@ def get_workflow_actions(workflow_id):
 
         return error_response("WORKFLOW_NOT_FOUND")
 
-
     # Get all actions for this workflow
     cur.execute("""
         SELECT
@@ -812,7 +895,6 @@ def get_workflow_actions(workflow_id):
 
     cur.close()
     conn.close()
-
 
     actions = []
 
@@ -960,30 +1042,12 @@ def create_conductor_workflow():
     if not isinstance(payload, dict):
         return jsonify({"message": "Payload must be an object"}), 400
 
-    api_url = CONDUCTOR_API_URL
-
-    if not api_url:
-        return jsonify({
-            "message": "CONDUCTOR_API_URL is not configured"
-        }), 500
-
-    start_request = {
-        "name": "validation_workflow",
-        "version": 1,
-        "correlationId": reference,
-        "input": {
-            "reference": reference,
-            "payload": payload
-        }
-    }
-
     try:
-        response = requests.post(
-            f"{api_url.rstrip('/')}/workflow",
-            json=start_request,
-            timeout=(5, 20)
+        workflow_id = start_conductor_workflow(
+            workflow_name=CONDUCTOR_VALIDATION_WORKFLOW_NAME,
+            reference=reference,
+            payload=payload
         )
-        response.raise_for_status()
 
     except requests.Timeout:
         # The workflow might have started before the response timed out.
@@ -995,27 +1059,21 @@ def create_conductor_workflow():
             )
         }), 504
 
-    except requests.RequestException:
-        logger.exception("conductor_workflow_start_failed")
-        return jsonify({
-            "message": (
-                "Could not start the Conductor workflow. "
-                "Check the Python service logs."
-            )
-        }), 502
-
-    # Conductor normally returns the execution ID as plain text.
-    # Also accept a JSON-encoded string.
-    workflow_id = response.text.strip().strip('"')
-
-    try:
-        UUID(workflow_id)
     except ValueError:
         logger.error("conductor_returned_invalid_workflow_id")
         return jsonify({
             "message": (
                 "Conductor did not return a workflow ID. "
                 "Check CONDUCTOR_API_URL."
+            )
+        }), 502
+
+    except requests.RequestException:
+        logger.exception("conductor_workflow_start_failed")
+        return jsonify({
+            "message": (
+                "Could not start the Conductor workflow. "
+                "Check the Python service logs."
             )
         }), 502
 
@@ -1088,6 +1146,7 @@ def get_conductor_workflow(workflow_id):
         }), 502
 
     return jsonify(workflow), 200
+
 
 if __name__ == "__main__":
     app.run(
