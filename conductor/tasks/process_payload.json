@@ -1,7 +1,7 @@
 {
   "name": "process_payload",
   "description": "Process payload after validation succeeds",
-  "retryCount": 3,
+  "retryCount": 0,
   "retryLogic": "FIXED",
   "retryDelaySeconds": 60,
   "timeoutSeconds": 0,

@@ -6,7 +6,7 @@
   "ownerEmail": "example@email.com",
   "restartable": true,
   "workflowStatusListenerEnabled": false,
-  "inputParameters": ["reference", "payload"],
+  "inputParameters": ["reference", "payload", "actionId"],
   "inputTemplate": {},
   "outputParameters": {
     "validationResult": "${validate_payload.output}"
@@ -22,7 +22,8 @@
       "permissive": false,
       "inputParameters": {
         "reference": "${workflow.input.reference}",
-        "payload": "${workflow.input.payload}"
+        "payload": "${workflow.input.payload}",
+        "actionId": "${workflow.input.actionId}"
       }
     }
   ],

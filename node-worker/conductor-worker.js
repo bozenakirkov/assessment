@@ -9,6 +9,19 @@ const WORKER_ID = process.env.WORKER_ID || "payload-worker";
 const POLL_INTERVAL_MS = 2000;
 const REQUEST_TIMEOUT_MS = 10000;
 
+const APP_API_URL = (process.env.API_URL || "http://app:5000").replace(/\/+$/, "");
+
+async function reportToApp(task, result) {
+  const actionId = task.inputData?.actionId;
+  if (!actionId) {
+    throw new Error("actionId missing from task input");
+  }
+  const body = result.status === "COMPLETED"
+    ? { status: "SUCCESS", result: result.outputData }
+    : { status: "FAILED", error: result.reasonForIncompletion };
+  await axios.post(`${APP_API_URL}/actions/${actionId}/result`, body, { timeout: REQUEST_TIMEOUT_MS });
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -101,8 +114,27 @@ async function handleTask(task, taskName) {
     };
   }
 
+  // Report to the app (updates the workflow state in the database)
+  try {
+    await reportToApp(task, result);
+    console.log("app_result_reported", { ...context, status: result.status });
+  } catch (error) {
+    console.error("app_result_report_failed", {
+      ...context,
+      intendedStatus: result.status,
+      error: error.message,
+      httpStatus: error.response?.status,
+      response: error.response?.data,
+    });
+
+    // The database was not updated, so the Conductor task must not show COMPLETED
+    result = {
+      status: "FAILED",
+      reasonForIncompletion: `App result report failed: ${error.message}`,
+    };
+  }
+
   // Keep result reporting separate from execution.
-  // A reporting error must not turn successful work into a FAILED result.
   try {
     await axios.post(
       `${CONDUCTOR_API_URL}/tasks`,

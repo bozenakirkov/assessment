@@ -54,7 +54,7 @@ def get_connection():
     )
 
 
-def start_conductor_workflow(workflow_name, reference, payload):
+def start_conductor_workflow(workflow_name, reference, payload, action_id):
     api_url = CONDUCTOR_API_URL
 
     if not api_url:
@@ -66,7 +66,8 @@ def start_conductor_workflow(workflow_name, reference, payload):
         "correlationId": reference,
         "input": {
             "reference": reference,
-            "payload": payload
+            "payload": payload,
+            "actionId": action_id
         }
     }
 
@@ -455,26 +456,11 @@ def transition_workflow(workflow_id):
         # Create legacy action row (kept for compatibility)
         if action_type:
             cur.execute("""
-                INSERT INTO actions
-                (
-                    workflow_id,
-                    type,
-                    status,
-                    attempt,
-                    payload,
-                    created_at,
-                    updated_at
-                )
+                INSERT INTO actions (workflow_id, type, status, attempt, payload, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (
-                workflow_id,
-                action_type,
-                "PENDING",
-                1,
-                payload,
-                now,
-                now
-            ))
+                RETURNING id
+            """, (workflow_id, action_type, "PENDING", 1, payload, now, now))
+            action_id = cur.fetchone()[0]
 
         conductor_execution_id = None
         workflow_name = None
@@ -495,7 +481,8 @@ def transition_workflow(workflow_id):
                 conductor_execution_id = start_conductor_workflow(
                     workflow_name=workflow_name,
                     reference=reference,
-                    payload=payload_object
+                    payload=payload_object,
+                    action_id=action_id,
                 )
             except requests.Timeout:
                 conn.rollback()
@@ -993,94 +980,6 @@ def get_workflow_history(workflow_id):
     )
 
     return jsonify(history)
-
-
-@app.route("/conductor/workflows", methods=["POST"])
-def create_conductor_workflow():
-    """
-    Start a Conductor workflow.
-    ---
-    tags:
-      - Conductor
-    consumes:
-      - application/json
-    parameters:
-      - in: body
-        name: workflow
-        required: true
-        schema:
-          type: object
-          required:
-            - reference
-            - payload
-          properties:
-            reference:
-              type: string
-            payload:
-              type: object
-    responses:
-      201:
-        description: Workflow started successfully.
-      400:
-        description: Invalid request.
-      502:
-        description: Conductor error.
-      504:
-        description: Conductor timeout.
-    """
-    data = request.get_json(silent=True)
-
-    if not isinstance(data, dict):
-        return jsonify({"message": "A JSON object is required"}), 400
-
-    reference = data.get("reference")
-    payload = data.get("payload")
-
-    if not isinstance(reference, str) or not reference.strip():
-        return jsonify({"message": "Reference is required"}), 400
-
-    if not isinstance(payload, dict):
-        return jsonify({"message": "Payload must be an object"}), 400
-
-    try:
-        workflow_id = start_conductor_workflow(
-            workflow_name=CONDUCTOR_VALIDATION_WORKFLOW_NAME,
-            reference=reference,
-            payload=payload
-        )
-
-    except requests.Timeout:
-        # The workflow might have started before the response timed out.
-        # Do not automatically retry this request.
-        return jsonify({
-            "message": (
-                "Conductor request timed out. Check Conductor "
-                "before trying again; the workflow may have started."
-            )
-        }), 504
-
-    except ValueError:
-        logger.error("conductor_returned_invalid_workflow_id")
-        return jsonify({
-            "message": (
-                "Conductor did not return a workflow ID. "
-                "Check CONDUCTOR_API_URL."
-            )
-        }), 502
-
-    except requests.RequestException:
-        logger.exception("conductor_workflow_start_failed")
-        return jsonify({
-            "message": (
-                "Could not start the Conductor workflow. "
-                "Check the Python service logs."
-            )
-        }), 502
-
-    return jsonify({
-        "workflowId": workflow_id,
-        "reference": reference
-    }), 201
 
 
 @app.route("/conductor/workflows/<workflow_id>", methods=["GET"])
